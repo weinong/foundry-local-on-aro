@@ -1,0 +1,26 @@
+# Secrets and credentials
+.pull-secret.txt
+.foundry-app.json
+.arc-sp-creds*.json
+kubeconfig
+kubeconfig.*
+*.kubeconfig
+.env
+.env.*
+.azure/
+
+# Terraform (preemptive — none today, but cheap to ignore)
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Local state / sentinels
+.state/
+.upgrade-snapshots/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
