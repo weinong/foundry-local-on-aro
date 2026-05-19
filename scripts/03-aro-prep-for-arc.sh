@@ -119,7 +119,22 @@ log_info "Creating azure-arc namespace (if absent)..."
 if ! oc get ns azure-arc &>/dev/null; then
     oc create ns azure-arc
 fi
-log_ok "azure-arc namespace present."
+
+# We pre-create the namespace so the privileged SCC RoleBinding below can be
+# applied before `az connectedk8s connect` schedules the aad-proxy pod.
+# But `az connectedk8s connect` then runs `helm install` for the azure-arc
+# release, and Helm 3 refuses to take ownership of a resource it didn't
+# create. We must mark the namespace as Helm-managed up front; otherwise
+# connect aborts with:
+#   "Namespace azure-arc ... exists and cannot be imported into the current
+#    release: invalid ownership metadata; label validation error: missing
+#    key 'app.kubernetes.io/managed-by': must be set to 'Helm' ..."
+# Reference: https://helm.sh/docs/topics/charts/#managing-namespace-resources
+log_info "Annotating azure-arc namespace for Helm adoption (OpenShift workaround)..."
+oc label namespace azure-arc app.kubernetes.io/managed-by=Helm --overwrite >/dev/null
+oc annotate namespace azure-arc meta.helm.sh/release-name=azure-arc --overwrite >/dev/null
+oc annotate namespace azure-arc meta.helm.sh/release-namespace=azure-arc-release --overwrite >/dev/null
+log_ok "azure-arc namespace present and ready for Helm adoption."
 
 log_info "Granting 'privileged' SCC to azure-arc-kube-aad-proxy-sa..."
 SCC_USER="system:serviceaccount:azure-arc:azure-arc-kube-aad-proxy-sa"
