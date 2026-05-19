@@ -5,3 +5,7 @@ Each phase appends a timestamped entry here. Most-recent at the bottom. When a s
 ## 2026-05-19T20:14:23Z — aro
 
 FIRST RUN FAILED with `InvalidPlatformWorkloadIdentity` on disk-csi-driver. Root cause: `scripts/01-aro-infra.sh` constructed `MI_SCOPE_PREFIX` with lowercase `/resourcegroups/` instead of `/resourceGroups/`. Azure CLI 2.85+ rejects this with `Invalid scope`. Errors were silently swallowed by `2>/dev/null || true`, so all 8 cluster-identity->Managed Identity Operator role assignments were never created, but the script still proceeded to `az aro create`. The ARO RP saw the operator identities had no federation grants and reported the first one (disk-csi-driver) as invalid. Fix: corrected casing and replaced error-swallowing with an `assign_role()` helper that tolerates RoleAssignmentExists but propagates everything else. Will re-run.
+
+## 2026-05-19T20:55:59Z — aro
+
+Created ARO cluster `aro-virt-test` version `4.20.15` in `centralus` (RG `aro-virt-test-rg`). API: https://api.dd1lmoi8.centralus.aroapp.io:6443/

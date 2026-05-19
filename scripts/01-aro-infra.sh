@@ -16,6 +16,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${REPO_ROOT}/env.sh"
 
+# Ensure az CLI is logged in and SUBSCRIPTION_ID is populated (env.sh defers
+# the lookup so that `make help` etc. don't pay the latency).
+require_azure_login
+
 echo "============================================="
 echo " Phase 1: ARO Infrastructure Provisioning"
 echo "============================================="
