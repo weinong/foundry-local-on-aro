@@ -70,15 +70,21 @@ OBJECT_ID=$(az ad app show --id "$APP_ID" --query id -o tsv)
 APP_URI="api://${APP_ID}"
 
 # -----------------------------------------------
-# Step 2 + 3 + 4: Expose an API + scope + token v2 + authorize Azure CLI.
+# Step 2 + 3: Expose an API + scope + token v2 (single PATCH).
 #
 # We build the full `api` block and PATCH it onto the application object
 # using Microsoft Graph. `az ad app update --identifier-uris` only sets the
-# URI; oauth2PermissionScopes, accessTokenAcceptedVersion, and
-# preAuthorizedApplications all live under `api` on the v1.0 application
-# resource, so a single PATCH keeps them consistent.
+# URI; oauth2PermissionScopes and accessTokenAcceptedVersion live under `api`
+# on the v1.0 application resource, so a single PATCH keeps them consistent.
+#
+# Step 4 (Azure CLI preauthorization) is a SEPARATE PATCH because Graph
+# validates `api.preAuthorizedApplications.delegatedPermissionIds` against
+# the *currently persisted* set of scope IDs. Putting the new scope and the
+# preauth that references it in the same PATCH fails with:
+#   "InvalidValue: Property api.preAuthorizedApplications.delegatedPermissionIds
+#    has a Permission Id that cannot be found in the AppPermissions sets."
 # -----------------------------------------------
-log_info "Configuring app: api://, scope, v2 tokens, Azure CLI preauth..."
+log_info "Configuring app: api://, scope, v2 tokens..."
 
 # Preserve any existing scope GUID if one already exists for foundry_access,
 # otherwise mint a new one. Re-using the GUID keeps consents stable.
@@ -97,7 +103,6 @@ API_PATCH=$(python3 - <<'PY'
 import json, os
 app_id = os.environ["APP_ID"]
 scope_id = os.environ["SCOPE_ID"]
-azcli_id = os.environ["AZ_CLI_CLIENT_ID"]
 patch = {
     "identifierUris": [f"api://{app_id}"],
     "api": {
@@ -113,7 +118,32 @@ patch = {
             "userConsentDescription": None,
             "userConsentDisplayName": None,
             "value": os.environ["SCOPE_NAME"]
-        }],
+        }]
+    }
+}
+print(json.dumps(patch))
+PY
+)
+
+# `az rest` to PATCH /applications/{objectId}. The az ad app update CLI does
+# not expose api.requestedAccessTokenVersion.
+az rest --method PATCH \
+    --url "https://graph.microsoft.com/v1.0/applications/${OBJECT_ID}" \
+    --headers "Content-Type=application/json" \
+    --body "$API_PATCH" \
+    --output none
+
+log_ok "App configured: api://${APP_ID}, scope=${SCOPE_NAME}, accessTokenAcceptedVersion=2."
+
+# Step 4: separate PATCH to preauthorize the Azure CLI for the foundry_access
+# scope (Graph rejects this in the same PATCH that creates the scope).
+log_info "Preauthorizing the Azure CLI client for scope '${SCOPE_NAME}'..."
+PREAUTH_PATCH=$(python3 - <<'PY'
+import json, os
+azcli_id = os.environ["AZ_CLI_CLIENT_ID"]
+scope_id = os.environ["SCOPE_ID"]
+patch = {
+    "api": {
         "preAuthorizedApplications": [{
             "appId": azcli_id,
             "delegatedPermissionIds": [scope_id]
@@ -123,16 +153,12 @@ patch = {
 print(json.dumps(patch))
 PY
 )
-
-# `az rest` to PATCH /applications/{objectId}. The az ad app update CLI does
-# not expose api.requestedAccessTokenVersion or preAuthorizedApplications.
 az rest --method PATCH \
     --url "https://graph.microsoft.com/v1.0/applications/${OBJECT_ID}" \
     --headers "Content-Type=application/json" \
-    --body "$API_PATCH" \
+    --body "$PREAUTH_PATCH" \
     --output none
-
-log_ok "App configured: api://${APP_ID}, scope=${SCOPE_NAME}, accessTokenAcceptedVersion=2, az CLI preauthorized."
+log_ok "Azure CLI preauthorized."
 
 # -----------------------------------------------
 # Step 6 (auth doc): assign 'Cognitive Services OpenAI User' to the Arc

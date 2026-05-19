@@ -46,35 +46,109 @@ helm repo update ingress-nginx >/dev/null
 log_ok "Helm repo ready."
 
 # -----------------------------------------------
-# 2. Namespace + SCC
+# 2. Namespace
 # -----------------------------------------------
 if ! oc get ns "$NS" &>/dev/null; then
     log_info "Creating namespace '${NS}'..."
     oc create ns "$NS"
 fi
 
-# Grant SCCs to the SAs the chart will create. add-scc-to-user is idempotent
-# and safe to apply before the SAs exist (the binding takes effect when the
-# SAs are created).
-SA_NAME="ingress-nginx"
-SA_ADMISSION="ingress-nginx-admission"
-log_info "Granting 'anyuid' SCC to ingress-nginx ServiceAccounts..."
-for sa in "$SA_NAME" "$SA_ADMISSION"; do
-    oc adm policy add-scc-to-user anyuid "system:serviceaccount:${NS}:${sa}" >/dev/null || true
-done
-
 # -----------------------------------------------
 # 3. helm upgrade --install
 # -----------------------------------------------
+# OpenShift-specific overrides via a temp values file:
+#   - controller.image.runAsUser / runAsGroup: null so OpenShift can assign
+#     a UID from the namespace's [openshift.io/sa.scc.uid-range].
+#   - controller.containerSecurityContext / podSecurityContext: minimal,
+#     no fixed UIDs.
+#   - admissionWebhooks.{createSecretJob,patchWebhookJob}.securityContext:
+#     same — drop fixed UIDs.
+# The chart template still emits a deprecated
+# `container.seccomp.security.alpha.kubernetes.io/<container>` annotation
+# on the admission jobs (kube-webhook-certgen v1.6.x), which OpenShift's SCC
+# admission rejects. We grant `anyuid` (which by default tolerates seccomp
+# alpha annotations) to the ServiceAccounts in the ingress-nginx namespace.
+# The ingress-nginx controller adds NET_BIND_SERVICE capability and runs as
+# uid 101 (www-data). Neither `restricted-v2` (requires UID in namespace range)
+# nor `anyuid` (forbids adding capabilities) accept this. The `nonroot-v2`
+# SCC allows non-zero UIDs AND adding NET_BIND_SERVICE.
+log_info "Granting 'nonroot-v2' SCC to all ServiceAccounts in '${NS}'..."
+oc adm policy add-scc-to-group nonroot-v2 "system:serviceaccounts:${NS}" >/dev/null
+log_info "Also granting 'anyuid' (for the kube-webhook-certgen admission jobs)..."
+oc adm policy add-scc-to-group anyuid "system:serviceaccounts:${NS}" >/dev/null
+
+VALUES_FILE="$(mktemp)"
+trap 'rm -f "$VALUES_FILE"' EXIT
+cat > "$VALUES_FILE" <<YAML
+controller:
+  service:
+    type: ClusterIP
+  ingressClassResource:
+    name: ${INGRESS_CLASS}
+    controllerValue: k8s.io/ingress-nginx
+  ingressClass: ${INGRESS_CLASS}
+  replicaCount: 1
+  image:
+    # The upstream container image expects to write into /etc/ingress-controller/ssl
+    # (a directory in the image filesystem, NOT a volume), which is chown'd
+    # to uid 101 (www-data). OpenShift's auto-assigned high UID gets a
+    # permission-denied. Pin runAsUser to 101 — this requires the anyuid
+    # SCC (granted below).
+    runAsUser: 101
+    runAsGroup: 82
+    allowPrivilegeEscalation: false
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+    runAsGroup: 82
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+    runAsGroup: 82
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    capabilities:
+      drop: [ALL]
+      add: [NET_BIND_SERVICE]
+    seccompProfile:
+      type: RuntimeDefault
+  admissionWebhooks:
+    enabled: true
+    createSecretJob:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: null
+        runAsGroup: null
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+        seccompProfile:
+          type: RuntimeDefault
+        readOnlyRootFilesystem: true
+    patchWebhookJob:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: null
+        runAsGroup: null
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+        seccompProfile:
+          type: RuntimeDefault
+        readOnlyRootFilesystem: true
+    patch:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: null
+        runAsGroup: null
+YAML
+
 log_info "Installing ingress-nginx via helm (ClusterIP, ingressClass=${INGRESS_CLASS})..."
 helm upgrade --install "$RELEASE_NAME" ingress-nginx/ingress-nginx \
     --namespace "$NS" \
-    --set controller.service.type=ClusterIP \
-    --set controller.ingressClassResource.name="$INGRESS_CLASS" \
-    --set controller.ingressClassResource.controllerValue="k8s.io/ingress-nginx" \
-    --set controller.ingressClass="$INGRESS_CLASS" \
-    --set controller.admissionWebhooks.enabled=true \
-    --set controller.replicaCount=1 \
+    --values "$VALUES_FILE" \
     --wait --timeout 10m
 
 # -----------------------------------------------

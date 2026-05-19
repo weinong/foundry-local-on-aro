@@ -84,6 +84,14 @@ make teardown
 - Running log: [`docs/progress.md`](./docs/progress.md)
 - Compatibility report: [`docs/validation-report.md`](./docs/validation-report.md)
 
+**Current status**: Phases A–H completed (ARO up, Arc connected, Entra app, cert-manager + trust-manager, ingress-nginx). Phase I (Foundry inference operator) is **blocked on Microsoft preview access** — `microsoft.foundry` Arc extension has zero versions visible to this subscription. See [the validation report](./docs/validation-report.md#d5-foundry-inference-operator-extension-type-is-preview-gated-blocking) for details.
+
+Key OpenShift divergences from the AKS-validated path documented so far:
+
+1. Helm-ownership annotations on the pre-created `azure-arc` namespace (required to combine with the documented `privileged` SCC fix for the aad-proxy SA).
+2. The `Microsoft.CertManagement` Arc extension is non-installable on OpenShift due to three independent chart/image defects. Workaround: install upstream `jetstack/cert-manager` + `jetstack/trust-manager` directly.
+3. ingress-nginx upstream chart needs `nonroot-v2` SCC, `readOnlyRootFilesystem: false`, and high-UID overrides on its admission jobs.
+
 ## Out of scope
 
 GPU workloads, public ingress, multi-namespace model deployments, OpenShift Virtualization, production hardening. See [AGENTS.md](./AGENTS.md#out-of-scope).
