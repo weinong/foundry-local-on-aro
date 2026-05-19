@@ -125,107 +125,93 @@ ROLE_IMAGE_REG_VNET="8b32b316-c2f5-4ddf-b05b-83dacd2d08b5"
 ROLE_ARO_OP_SUBNET="4436bae4-7702-4c84-919b-c4069ff25ee2"
 ROLE_RP_VNET="42f3c60f-e7b1-46d7-ba56-6de681664342"
 
-# Scope paths
-MI_SCOPE_PREFIX="/subscriptions/${SUBSCRIPTION_ID}/resourcegroups/${RESOURCEGROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities"
+# Scope paths.
+# Note: Azure CLI 2.85.0+ validates scope path casing strictly. The literal
+# segments must be /subscriptions/, /resourceGroups/ (capital G), and
+# /providers/. Lowercase variants like 'resourcegroups' are rejected with
+# 'Invalid scope' — silently if errors are swallowed.
+MI_SCOPE_PREFIX="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities"
 VNET_SCOPE="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCEGROUP}/providers/Microsoft.Network/virtualNetworks/${VNET_NAME}"
 MASTER_SCOPE="${VNET_SCOPE}/subnets/${MASTER_SUBNET}"
 WORKER_SCOPE="${VNET_SCOPE}/subnets/${WORKER_SUBNET}"
 ROLE_DEF_PREFIX="/subscriptions/${SUBSCRIPTION_ID}/providers/Microsoft.Authorization/roleDefinitions"
+
+# Idempotent role-assignment helper.
+# Args: <principalId> <roleDefId> <scope>
+# Treats "RoleAssignmentExists" (HTTP 409) as success; everything else fails loudly.
+assign_role() {
+    local pid="$1"
+    local role_id="$2"
+    local scope="$3"
+    local out
+    if out=$(az role assignment create \
+            --assignee-object-id "$pid" \
+            --assignee-principal-type ServicePrincipal \
+            --role "${ROLE_DEF_PREFIX}/${role_id}" \
+            --scope "$scope" \
+            --output none 2>&1); then
+        return 0
+    fi
+    if echo "$out" | grep -qE 'RoleAssignmentExists|already exists'; then
+        return 0
+    fi
+    log_error "Role assignment failed:"
+    log_error "  principal: $pid"
+    log_error "  role:      $role_id"
+    log_error "  scope:     $scope"
+    log_error "  error:     $out"
+    return 1
+}
 
 # --- 4a. Cluster identity -> Managed Identity Operator over each operator identity ---
 OPERATOR_IDENTITIES=("$MI_ARO_OP" "$MI_CCM" "$MI_INGRESS" "$MI_MACHINE_API" "$MI_DISK_CSI" "$MI_CLOUD_NET" "$MI_IMAGE_REG" "$MI_FILE_CSI")
 
 log_info "  Assigning Managed Identity Operator role to cluster identity..."
 for op_id in "${OPERATOR_IDENTITIES[@]}"; do
-    az role assignment create \
-        --assignee-object-id "$CLUSTER_PRINCIPAL" \
-        --assignee-principal-type ServicePrincipal \
-        --role "${ROLE_DEF_PREFIX}/${ROLE_MI_OPERATOR}" \
-        --scope "${MI_SCOPE_PREFIX}/${op_id}" \
-        --output none 2>/dev/null || true
+    assign_role "$CLUSTER_PRINCIPAL" "$ROLE_MI_OPERATOR" "${MI_SCOPE_PREFIX}/${op_id}"
 done
 
 # --- 4b. cloud-controller-manager -> subnets ---
 log_info "  Assigning cloud-controller-manager roles..."
 for SUBNET_SCOPE in "$MASTER_SCOPE" "$WORKER_SCOPE"; do
-    az role assignment create \
-        --assignee-object-id "$CCM_PRINCIPAL" \
-        --assignee-principal-type ServicePrincipal \
-        --role "${ROLE_DEF_PREFIX}/${ROLE_CCM_SUBNET}" \
-        --scope "$SUBNET_SCOPE" \
-        --output none 2>/dev/null || true
+    assign_role "$CCM_PRINCIPAL" "$ROLE_CCM_SUBNET" "$SUBNET_SCOPE"
 done
 
 # --- 4c. ingress -> subnets ---
 log_info "  Assigning ingress roles..."
 for SUBNET_SCOPE in "$MASTER_SCOPE" "$WORKER_SCOPE"; do
-    az role assignment create \
-        --assignee-object-id "$INGRESS_PRINCIPAL" \
-        --assignee-principal-type ServicePrincipal \
-        --role "${ROLE_DEF_PREFIX}/${ROLE_INGRESS_SUBNET}" \
-        --scope "$SUBNET_SCOPE" \
-        --output none 2>/dev/null || true
+    assign_role "$INGRESS_PRINCIPAL" "$ROLE_INGRESS_SUBNET" "$SUBNET_SCOPE"
 done
 
 # --- 4d. machine-api -> subnets ---
 log_info "  Assigning machine-api roles..."
 for SUBNET_SCOPE in "$MASTER_SCOPE" "$WORKER_SCOPE"; do
-    az role assignment create \
-        --assignee-object-id "$MACHINE_API_PRINCIPAL" \
-        --assignee-principal-type ServicePrincipal \
-        --role "${ROLE_DEF_PREFIX}/${ROLE_MACHINE_API_SUBNET}" \
-        --scope "$SUBNET_SCOPE" \
-        --output none 2>/dev/null || true
+    assign_role "$MACHINE_API_PRINCIPAL" "$ROLE_MACHINE_API_SUBNET" "$SUBNET_SCOPE"
 done
 
 # --- 4e. cloud-network-config -> VNet ---
 log_info "  Assigning cloud-network-config role..."
-az role assignment create \
-    --assignee-object-id "$CLOUD_NET_PRINCIPAL" \
-    --assignee-principal-type ServicePrincipal \
-    --role "${ROLE_DEF_PREFIX}/${ROLE_CLOUD_NET_VNET}" \
-    --scope "$VNET_SCOPE" \
-    --output none 2>/dev/null || true
+assign_role "$CLOUD_NET_PRINCIPAL" "$ROLE_CLOUD_NET_VNET" "$VNET_SCOPE"
 
 # --- 4f. file-csi-driver -> VNet ---
 log_info "  Assigning file-csi-driver role..."
-az role assignment create \
-    --assignee-object-id "$FILE_CSI_PRINCIPAL" \
-    --assignee-principal-type ServicePrincipal \
-    --role "${ROLE_DEF_PREFIX}/${ROLE_FILE_CSI_VNET}" \
-    --scope "$VNET_SCOPE" \
-    --output none 2>/dev/null || true
+assign_role "$FILE_CSI_PRINCIPAL" "$ROLE_FILE_CSI_VNET" "$VNET_SCOPE"
 
 # --- 4g. image-registry -> VNet ---
 log_info "  Assigning image-registry role..."
-az role assignment create \
-    --assignee-object-id "$IMAGE_REG_PRINCIPAL" \
-    --assignee-principal-type ServicePrincipal \
-    --role "${ROLE_DEF_PREFIX}/${ROLE_IMAGE_REG_VNET}" \
-    --scope "$VNET_SCOPE" \
-    --output none 2>/dev/null || true
+assign_role "$IMAGE_REG_PRINCIPAL" "$ROLE_IMAGE_REG_VNET" "$VNET_SCOPE"
 
 # --- 4h. aro-operator -> subnets ---
 log_info "  Assigning aro-operator roles..."
 for SUBNET_SCOPE in "$MASTER_SCOPE" "$WORKER_SCOPE"; do
-    az role assignment create \
-        --assignee-object-id "$ARO_OP_PRINCIPAL" \
-        --assignee-principal-type ServicePrincipal \
-        --role "${ROLE_DEF_PREFIX}/${ROLE_ARO_OP_SUBNET}" \
-        --scope "$SUBNET_SCOPE" \
-        --output none 2>/dev/null || true
+    assign_role "$ARO_OP_PRINCIPAL" "$ROLE_ARO_OP_SUBNET" "$SUBNET_SCOPE"
 done
 
 # --- 4i. Azure Red Hat OpenShift RP first-party SP -> VNet ---
 log_info "  Assigning ARO RP first-party service principal role..."
 ARO_RP_SP_OID=$(az ad sp list --display-name "Azure Red Hat OpenShift RP" --query '[0].id' -o tsv 2>/dev/null || echo "")
 if [[ -n "$ARO_RP_SP_OID" ]]; then
-    az role assignment create \
-        --assignee-object-id "$ARO_RP_SP_OID" \
-        --assignee-principal-type ServicePrincipal \
-        --role "${ROLE_DEF_PREFIX}/${ROLE_RP_VNET}" \
-        --scope "$VNET_SCOPE" \
-        --output none 2>/dev/null || true
+    assign_role "$ARO_RP_SP_OID" "$ROLE_RP_VNET" "$VNET_SCOPE"
     log_ok "  ARO RP SP role assigned."
 else
     log_warn "  Could not find 'Azure Red Hat OpenShift RP' service principal."
