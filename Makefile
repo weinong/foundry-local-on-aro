@@ -121,7 +121,7 @@ $(STATE_DIR)/ingress.done: $(STATE_DIR)/arc-connect.done
 	touch $@
 
 foundry-operator: $(STATE_DIR)/foundry-operator.done
-$(STATE_DIR)/foundry-operator.done: $(STATE_DIR)/cert-manager.done $(STATE_DIR)/ingress.done $(STATE_DIR)/entra-app.done
+$(STATE_DIR)/foundry-operator.done: $(STATE_DIR)/cert-manager.done $(STATE_DIR)/ingress.done
 	@$(SOURCE_ENV)
 	$(SCRIPTS)/08-foundry-operator.sh
 	touch $@

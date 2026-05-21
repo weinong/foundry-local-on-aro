@@ -1,0 +1,158 @@
+Helm Chart Installation Guide 
+
+This article shows you how to set up Foundry Local as a Helm chart on your AKS enabled by Arc cluster. 
+
+ 
+Hardware & Software Prerequisites 
+
+K8S cluster connected to Azure Arc - Mandatory 
+
+Kubernetes version 1.29+ 
+
+Kubectl: 
+Install on Linux 
+Install on MacOS 
+Install on Windows 
+
+Install Helm 
+
+GPU Specifications 
+Foundry Local on Azure Local supports NVIDIA GPUs. Ensure your GPU drivers (CUDA drivers) are installed on the nodes, and the Kubernetes device plugin for NVIDIA is configured so that the cluster can schedule GPU workloads. For more information, see NVIDIA Operator. 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+ 
+
+Step 1 – Install Cert-Manager and Trust-Manager 
+
+Note: For Trust-Manager it is mandatory to set:  
+--set secretTargets.enabled=true --set secretTargets.authorizedSecretsAll=true  
+ 
+Note: Do not proceed to install Trust-Manager until Cert-Manager pods are up and running! 
+
+ 
+Bash 
+
+helm repo add jetstack https://charts.jetstack.io 
+ 
+helm repo update 
+ 
+helm upgrade --install cert-manager jetstack/cert-manager \ 
+  --namespace cert-manager \ 
+  --create-namespace \ 
+  --version v1.19.2 \ 
+  --set crds.enabled=true \ 
+  --set crds.keep=true \ 
+  --set image.tag=v1.19.2 \ 
+  --set webhook.image.tag=v1.19.2 \ 
+  --set cainjector.image.tag=v1.19.2 \ 
+  --set acmesolver.image.tag=v1.19.2 \ 
+  --set startupapicheck.image.tag=v1.19.2 \ 
+  --wait 
+ 
+helm upgrade --install trust-manager jetstack/trust-manager \ 
+  --namespace cert-manager \ 
+  --version v0.20.3 \ 
+  --set image.tag=v0.20.3 \ 
+  --set defaultPackage.enabled=false \ 
+  --set secretTargets.enabled=true \ 
+  --set secretTargets.authorizedSecretsAll=true \ 
+  --wait 
+
+PowerShell 
+
+helm repo add jetstack https://charts.jetstack.io 
+ 
+helm repo update 
+ 
+
+ 
+
+helm upgrade --install cert-manager jetstack/cert-manager ` 
+  --namespace cert-manager ` 
+  --create-namespace ` 
+  --version v1.19.2 ` 
+  --set crds.enabled=true ` 
+  --set crds.keep=true ` 
+  --set image.tag=v1.19.2 ` 
+  --set webhook.image.tag=v1.19.2 ` 
+  --set cainjector.image.tag=v1.19.2 ` 
+  --set acmesolver.image.tag=v1.19.2 ` 
+  --set startupapicheck.image.tag=v1.19.2 ` 
+  --wait 
+ 
+helm upgrade --install trust-manager jetstack/trust-manager ` 
+  --namespace cert-manager ` 
+  --version v0.20.3 ` 
+  --set image.tag=v0.20.3 ` 
+  --set defaultPackage.enabled=false ` 
+  --set secretTargets.enabled=true ` 
+  --set secretTargets.authorizedSecretsAll=true ` 
+  --wait 
+
+Step 2 – Install Inference Operator 
+
+Bash 
+
+helm upgrade --install inference-operator \ 
+oci://mcr.microsoft.com/microsoft.foundry/foundrylocalenabledbyarc/helmcharts/helm/inference-operator \ 
+--version 0.260430.8 -n foundry-local-operator --create-namespace \ 
+--set entraAuth.enabled=false 
+
+PowerShell 
+
+helm upgrade --install inference-operator ` 
+oci://mcr.microsoft.com/microsoft.foundry/foundrylocalenabledbyarc/helmcharts/helm/inference-operator ` 
+--version 0.260430.8 -n foundry-local-operator --create-namespace ` 
+--set entraAuth.enabled=false 
+
+ 
+ 
+
+ 
+
+ 
+
+Step 3 – Verify the Operator is Running 
+
+Bash 
+
+kubectl get pods -n foundry-local-operator 
+ 
+kubectl get crd | grep foundry 
+
+PowerShell 
+
+kubectl get pods -n foundry-local-operator 
+ 
+kubectl get crd | Select-String -Pattern "foundry" 
+
+Expected Output 
+
+ 
+
+ 
+
+ 

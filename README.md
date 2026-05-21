@@ -84,13 +84,15 @@ make teardown
 - Running log: [`docs/progress.md`](./docs/progress.md)
 - Compatibility report: [`docs/validation-report.md`](./docs/validation-report.md)
 
-**Current status**: Phases A–H completed (ARO up, Arc connected, Entra app, cert-manager + trust-manager, ingress-nginx). Phase I (Foundry inference operator) is **blocked on Microsoft preview access** — `microsoft.foundry` Arc extension has zero versions visible to this subscription. See [the validation report](./docs/validation-report.md#d5-foundry-inference-operator-extension-type-is-preview-gated-blocking) for details.
+**Status: validated end-to-end on ARO.** All 9 pipeline phases (preflight → validate) complete with an inference round-trip (HTTP 200, model `qwen3-0.6b` returned a sensible chat completion).
 
-Key OpenShift divergences from the AKS-validated path documented so far:
+Key OpenShift divergences from the AKS-validated path:
 
 1. Helm-ownership annotations on the pre-created `azure-arc` namespace (required to combine with the documented `privileged` SCC fix for the aad-proxy SA).
 2. The `Microsoft.CertManagement` Arc extension is non-installable on OpenShift due to three independent chart/image defects. Workaround: install upstream `jetstack/cert-manager` + `jetstack/trust-manager` directly.
 3. ingress-nginx upstream chart needs `nonroot-v2` SCC, `readOnlyRootFilesystem: false`, and high-UID overrides on its admission jobs.
+4. The `Microsoft.Foundry` Arc extension type is preview-access-gated. Workaround: use the public helm chart `oci://mcr.microsoft.com/microsoft.foundry/foundrylocalenabledbyarc/helmcharts/helm/inference-operator` (per the Foundry team's Helm Installation Guide).
+5. The Foundry chart's `telemetry-collector` requires `privileged` SCC (init container needs `runAsUser: 0`, `NET_ADMIN`/`NET_RAW`, `fsGroup: 10001`); the main `inference-operator` and `model-store` pods only need `nonroot-v2`.
 
 ## Out of scope
 
